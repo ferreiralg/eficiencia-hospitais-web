@@ -372,7 +372,7 @@ class GeradorVisualiza:
         })
     
     def criar_tabela_media_movel(self, df: pd.DataFrame, cnes: str) -> str:
-        """Cria tabela HTML com dados de média móvel dos últimos 12 meses."""
+        """Cria tabela HTML com dados de média móvel dos últimos 12 meses com coloração baseada em variação percentual."""
         if df.empty:
             return "<p>Nenhum dado de média móvel encontrado.</p>"
         
@@ -381,18 +381,116 @@ class GeradorVisualiza:
         colunas_existentes = [col for col in colunas_interesse if col in df.columns]
         
         df_tabela = df[colunas_existentes].copy()
+        df_original = df_tabela.copy()  # Mantém valores originais para cálculo de variação
         
-        # Formata valores numéricos
-        for col in df_tabela.columns:
-            if col != 'COMPETEN' and df_tabela[col].dtype in ['float64', 'int64']:
-                df_tabela[col] = df_tabela[col].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+        # Calcula variações percentuais entre meses consecutivos para cada campo
+        variacoes = {}
+        colunas_numericas = [col for col in df_tabela.columns if col != 'COMPETEN']
+        
+        for col in colunas_numericas:
+            if col in df_original.columns and df_original[col].dtype in ['float64', 'int64']:
+                # Calcula variação percentual em relação ao mês anterior (ordenado por competência)
+                df_sorted = df_original.sort_values('COMPETEN')
+                valores = df_sorted[col].values
+                variacoes_col = []
+                
+                for i in range(len(valores)):
+                    if i == 0:
+                        variacoes_col.append(0)  # Primeiro mês não tem variação
+                    else:
+                        if valores[i-1] != 0 and pd.notna(valores[i-1]) and pd.notna(valores[i]):
+                            variacao = ((valores[i] - valores[i-1]) / valores[i-1]) * 100
+                            variacoes_col.append(variacao)
+                        else:
+                            variacoes_col.append(0)
+                
+                # Mapeia de volta para o DataFrame original (mesmo índice)
+                variacoes[col] = pd.Series(variacoes_col, index=df_sorted.index)
+                variacoes[col] = variacoes[col].reindex(df_tabela.index).fillna(0)
+        
+        # Cria DataFrame para HTML com formatação e classes CSS
+        df_html = df_tabela.copy()
         
         # Renomeia colunas para nomes padronizados
-        df_tabela = df_tabela.rename(columns=NOMES_CAMPOS_PADRAO)
+        mapeamento_colunas = NOMES_CAMPOS_PADRAO.copy()
         
-        # Converte para HTML
-        html = df_tabela.to_html(index=False, classes='table table-striped table-hover', escape=False)
-        return html
+        # Cria HTML manualmente para ter controle total sobre as classes CSS
+        html_rows = []
+        
+        # Cabeçalho
+        headers = []
+        for col in df_tabela.columns:
+            col_display = mapeamento_colunas.get(col, col)
+            headers.append(f'<th>{col_display}</th>')
+        
+        html_rows.append(f'<tr>{"".join(headers)}</tr>')
+        
+        # Linhas de dados
+        for idx, row in df_tabela.iterrows():
+            cells = []
+            
+            for col_idx, col in enumerate(df_tabela.columns):
+                if col == 'COMPETEN':
+                    # Primeira coluna (competência) sem formatação especial
+                    cells.append(f'<td>{row[col]}</td>')
+                else:
+                    # Colunas numéricas com possível coloração
+                    valor_original = row[col]
+                    valor_formatado = f"{valor_original:,.0f}" if pd.notna(valor_original) else "0"
+                    
+                    # Verifica se há variação significativa para esta célula
+                    classe_css = ""
+                    tooltip = ""
+                    
+                    if col in variacoes:
+                        variacao = variacoes[col].loc[idx]
+                        
+                        if abs(variacao) > 20:  # Variação acima de 20%
+                            if variacao > 20:
+                                classe_css = ' class="variacao-alta-positiva"'
+                                tooltip = f' title="↗ Aumento de {variacao:.1f}% em relação ao mês anterior"'
+                            elif variacao < -20:
+                                classe_css = ' class="variacao-alta-negativa"'
+                                tooltip = f' title="↘ Redução de {abs(variacao):.1f}% em relação ao mês anterior"'
+                    
+                    cells.append(f'<td{classe_css}{tooltip}>{valor_formatado}</td>')
+            
+            html_rows.append(f'<tr>{"".join(cells)}</tr>')
+        
+        # Monta HTML completo da tabela
+        html_table = f'''
+        <table id="media-movel-table" class="table table-striped table-hover">
+            <thead>
+                {html_rows[0]}
+            </thead>
+            <tbody>
+                {"".join(html_rows[1:])}
+            </tbody>
+        </table>
+        '''
+        
+        # CSS para formatação e cores
+        style_css = """
+        <style>
+        #media-movel-table th:not(:first-child) { text-align: right !important; }
+        #media-movel-table td:not(:first-child) { text-align: right !important; }
+        .variacao-alta-positiva { 
+            background-color: #d4edda !important; 
+            color: #155724 !important; 
+            font-weight: bold !important;
+        }
+        .variacao-alta-negativa { 
+            background-color: #f8d7da !important; 
+            color: #721c24 !important; 
+            font-weight: bold !important;
+        }
+        #media-movel-table td[title] {
+            cursor: help;
+        }
+        </style>
+        """
+        
+        return style_css + html_table
     
     def criar_grafico_evolucao_temporal(self, df: pd.DataFrame, df_dea: pd.DataFrame, cnes: str, competencia: str, nome_arquivo: str) -> str:
         """Cria gráfico de evolução temporal dos inputs/outputs DEA com eficiência."""
@@ -521,8 +619,8 @@ class GeradorVisualiza:
             colunas_comparacao = DEA_INPUT_COLS + [DEA_OUTPUT_COL]
             dados_tabela = []
             
-            # Linha do CNES alvo
-            linha_alvo = {'CNES': cnes, 'Tipo': 'Hospital Analisado', 'Lambda': 1.0}
+            # 1ª Linha: CNES alvo
+            linha_alvo = {'CNES': cnes, 'Tipo': 'Hospital Analisado', 'Lambda': 1.0, '_destaque': True}
             for col in colunas_comparacao:
                 if col in valores_originais:
                     linha_alvo[col] = float(valores_originais[col])
@@ -530,7 +628,18 @@ class GeradorVisualiza:
                     linha_alvo[col] = 0
             dados_tabela.append(linha_alvo)
             
-            # Linhas dos benchmarks com lambdas
+            # 2ª Linha: Metas DEA (logo após o hospital analisado)
+            if metas:
+                linha_meta = {'CNES': cnes, 'Tipo': 'Metas de Eficiência', 'Lambda': '-', '_destaque': True}
+                for col in colunas_comparacao:
+                    meta_key = f"target_{col}" if f"target_{col}" in metas else col
+                    if meta_key in metas:
+                        linha_meta[col] = float(metas[meta_key])
+                    else:
+                        linha_meta[col] = linha_alvo.get(col, 0)
+                dados_tabela.append(linha_meta)
+            
+            # Linhas dos benchmarks com lambdas (a partir da 3ª linha)
             for benchmark_cnes, lambda_val in list(benchmarks_dea.items())[:10]:
                 df_bench = df_mm[
                     (df_mm['CNES'] == benchmark_cnes) & 
@@ -541,7 +650,8 @@ class GeradorVisualiza:
                     linha_bench = {
                         'CNES': benchmark_cnes, 
                         'Tipo': 'Benchmark',
-                        'Lambda': float(lambda_val)
+                        'Lambda': float(lambda_val),
+                        '_destaque': False
                     }
                     for col in colunas_comparacao:
                         if col in df_bench.columns:
@@ -550,34 +660,144 @@ class GeradorVisualiza:
                             linha_bench[col] = 0
                     dados_tabela.append(linha_bench)
             
-            # Linha de metas DEA
-            if metas:
-                linha_meta = {'CNES': 'META DEA', 'Tipo': 'Meta Eficiência', 'Lambda': '-'}
-                for col in colunas_comparacao:
-                    meta_key = f"target_{col}" if f"target_{col}" in metas else col
-                    if meta_key in metas:
-                        linha_meta[col] = float(metas[meta_key])
-                    else:
-                        linha_meta[col] = linha_alvo.get(col, 0)
-                dados_tabela.append(linha_meta)
-            
             df_tabela = pd.DataFrame(dados_tabela)
             
-            # Formata valores
-            for col in colunas_comparacao:
-                if col in df_tabela.columns:
-                    df_tabela[col] = df_tabela[col].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "0")
+            # Cria HTML manualmente para controle de formatação e destaque
+            mapeamento_colunas = NOMES_CAMPOS_PADRAO.copy()
+            html_rows = []
             
-            # Formata Lambda
-            df_tabela['Lambda'] = df_tabela['Lambda'].apply(
-                lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else str(x)
-            )
+            # Cabeçalho
+            headers = []
+            for col in ['CNES', 'Tipo', 'Lambda'] + colunas_comparacao:
+                if col in ['CNES', 'Tipo', 'Lambda']:
+                    col_display = col
+                else:
+                    col_display = mapeamento_colunas.get(col, col)
+                headers.append(f'<th>{col_display}</th>')
             
-            # Renomeia colunas para nomes padronizados
-            df_tabela = df_tabela.rename(columns=NOMES_CAMPOS_PADRAO)
+            html_rows.append(f'<tr>{"".join(headers)}</tr>')
             
-            html = df_tabela.to_html(index=False, classes='table table-striped table-hover', escape=False)
-            return html
+            # Linhas de dados
+            for idx, row in df_tabela.iterrows():
+                cells = []
+                row_class = ' class="linha-destaque"' if row.get('_destaque', False) else ''
+                
+                # CNES
+                cells.append(f'<td>{row["CNES"]}</td>')
+                
+                # Tipo
+                cells.append(f'<td>{row["Tipo"]}</td>')
+                
+                # Lambda
+                lambda_val = row['Lambda']
+                lambda_formatado = f"{lambda_val:.4f}" if isinstance(lambda_val, (int, float)) else str(lambda_val)
+                cells.append(f'<td>{lambda_formatado}</td>')
+                
+                # Colunas numéricas (inputs/outputs) com coloração especial para metas
+                for col in colunas_comparacao:
+                    valor = row[col]
+                    valor_formatado = f"{valor:,.0f}" if pd.notna(valor) else "0"
+                    
+                    # Se for linha de metas, aplica coloração e setas
+                    if row.get('Tipo') == 'Metas de Eficiência' and idx > 0:
+                        # Compara com valor atual (primeira linha)
+                        valor_atual = dados_tabela[0][col]  # Primeira linha é sempre o hospital analisado
+                        
+                        # Verifica se valores são próximos ou se valor atual é muito baixo
+                        if valor_atual > 0 and abs(valor - valor_atual) > 0.01:
+                            # Calcula diferença percentual
+                            diff_pct = ((valor - valor_atual) / valor_atual) * 100
+                            
+                            # Só aplica coloração se a diferença for significativa (>1%)
+                            if abs(diff_pct) > 1.0:
+                                # Lógica de cores CORRIGIDA baseada no tipo de variável DEA
+                                if col in DEA_INPUT_COLS:
+                                    # Para INPUTS: redução = PROBLEMA (vermelho), valor igual/próximo = BOM (verde)
+                                    if valor < valor_atual:  # Meta menor que atual = PROBLEMA (usando recursos demais)
+                                        classe_meta = "meta-atencao"
+                                        seta = "↘"
+                                        tooltip = f"⚠️ Reduzir {abs(diff_pct):.1f}% - Recursos em excesso"
+                                    else:  # Meta maior que atual = neutro (pode precisar de mais recursos)
+                                        classe_meta = "meta-neutra"
+                                        seta = "↗"
+                                        tooltip = f"ℹ️ Aumentar {diff_pct:.1f}% - Mais recursos necessários"
+                                else:
+                                    # Para OUTPUT: aumento = PROBLEMA (vermelho), valor igual/próximo = BOM (verde)
+                                    if valor > valor_atual:  # Meta maior que atual = PROBLEMA (produzindo pouco)
+                                        classe_meta = "meta-atencao"
+                                        seta = "↗"
+                                        tooltip = f"⚠️ Aumentar {diff_pct:.1f}% - Produção insuficiente"
+                                    else:  # Meta menor que atual = bom (produzindo adequadamente)
+                                        classe_meta = "meta-boa"
+                                        seta = "↘"
+                                        tooltip = f"✅ Produção adequada ({abs(diff_pct):.1f}% acima da meta)"
+                                
+                                cells.append(f'<td class="{classe_meta}" title="{tooltip}">{seta} {valor_formatado}</td>')
+                            else:
+                                # Diferença menor que 1% = eficiente
+                                cells.append(f'<td class="meta-boa" title="✅ Meta praticamente atingida (diferença < 1%)">≈ {valor_formatado}</td>')
+                        else:
+                            # Valores iguais, muito próximos ou valor atual = 0 = eficiente
+                            cells.append(f'<td class="meta-boa" title="✅ Meta atingida - Operação eficiente">≈ {valor_formatado}</td>')
+                    else:
+                        # Linhas normais (hospital analisado e benchmarks)
+                        cells.append(f'<td>{valor_formatado}</td>')
+                
+                html_rows.append(f'<tr{row_class}>{"".join(cells)}</tr>')
+            
+            # Monta HTML completo da tabela
+            html_table = f'''
+            <table id="benchmarks-table" class="table table-striped table-hover">
+                <thead>
+                    {html_rows[0]}
+                </thead>
+                <tbody>
+                    {"".join(html_rows[1:])}
+                </tbody>
+            </table>
+            '''
+            
+            # CSS para formatação, alinhamento e destaque
+            style_css = """
+            <style>
+            #benchmarks-table th:nth-child(n+3) { text-align: right !important; }
+            #benchmarks-table td:nth-child(n+3) { text-align: right !important; }
+            .linha-destaque { 
+                background-color: #e3f2fd !important; 
+                font-weight: bold !important;
+                border-left: 4px solid #1976d2 !important;
+            }
+            .linha-destaque td {
+                color: #0d47a1 !important;
+            }
+            .meta-boa {
+                background-color: #c8e6c9 !important;
+                color: #2e7d32 !important;
+                font-weight: bold !important;
+                border-radius: 4px !important;
+                padding: 4px 8px !important;
+            }
+            .meta-atencao {
+                background-color: #ffcdd2 !important;
+                color: #c62828 !important;
+                font-weight: bold !important;
+                border-radius: 4px !important;
+                padding: 4px 8px !important;
+            }
+            .meta-neutra {
+                background-color: #fff3e0 !important;
+                color: #ef6c00 !important;
+                font-weight: bold !important;
+                border-radius: 4px !important;
+                padding: 4px 8px !important;
+            }
+            #benchmarks-table td[title] {
+                cursor: help;
+            }
+            </style>
+            """
+            
+            return style_css + html_table
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.logger.warning(f"Erro ao processar dados DEA para tabela benchmarks: {e}")
@@ -701,19 +921,27 @@ class GeradorVisualiza:
                 )
             ),
             showlegend=True,
+            legend=dict(
+                orientation="h",  # Legenda horizontal
+                yanchor="top",
+                y=-0.1,  # Posiciona abaixo do gráfico
+                xanchor="center",
+                x=0.5  # Centraliza horizontalmente
+            ),
             title=dict(
                 text=f"Spider Chart: Atual vs Metas DEA - CNES {cnes}<br><sub>Valores normalizados (0-1 por categoria)</sub>",
                 x=0.5,
                 font=dict(size=16)
             ),
-            height=600,
+            height=650,  # Aumenta altura para acomodar legenda
             width=700,
+            margin=dict(t=100, b=100, l=50, r=50),  # Margem ajustada
             annotations=[
                 dict(
                     text="Valores normalizados: 1.0 = máximo da categoria",
                     showarrow=False,
                     x=0.5,
-                    y=-0.1,
+                    y=-0.2,  # Move mais para baixo devido à legenda
                     xref="paper",
                     yref="paper",
                     font=dict(size=10, color="gray")
@@ -1079,9 +1307,6 @@ class GeradorRelatorio:
         grafico_spider = visualizador.criar_grafico_spider(
             df_dea, cnes, competencia, 'grafico_spider.html'
         )
-        grafico_procedimentos = visualizador.criar_grafico_procedimentos(
-            df_mm, cnes, competencia, benchmarks, 'procedimentos.png'
-        )
         grafico_procedimentos_plotly = visualizador.criar_grafico_procedimentos_plotly(
             df_mm, cnes, competencia, benchmarks, 'procedimentos_interativo.html'
         )
@@ -1156,11 +1381,6 @@ class GeradorRelatorio:
                 df_dea, cnes, competencia, 'grafico_spider.html'
             )
             
-            # Gráfico de procedimentos (PNG)
-            grafico_procedimentos = visualizador.criar_grafico_procedimentos(
-                df_mm, cnes, competencia, benchmarks, 'procedimentos.png'
-            )
-            
             # Gráfico de procedimentos interativo (HTML)
             grafico_procedimentos_plotly = visualizador.criar_grafico_procedimentos_plotly(
                 df_mm, cnes, competencia, benchmarks, 'procedimentos_interativo.html'
@@ -1200,15 +1420,12 @@ class GeradorRelatorio:
             html_spider = ler_html_como_string(grafico_spider) if grafico_spider else ""
             html_procedimentos_plotly = ler_html_como_string(grafico_procedimentos_plotly) if grafico_procedimentos_plotly else ""
             
-            # Converte imagem PNG para base64
-            img_procedimentos_base64 = converter_imagem_base64(grafico_procedimentos) if grafico_procedimentos else ""
-            
             # Gera relatório HTML embedded
             html_relatorio = self._gerar_html_relatorio_embedded(
                 cnes, competencia, tabela_mm, tabela_benchmarks, 
                 df_alertas_cnes, len(benchmarks), info_hospital,
                 info_eficiencia, info_alvos, html_evolucao,
-                html_spider, html_procedimentos_plotly, img_procedimentos_base64
+                html_spider, html_procedimentos_plotly
             )
             
             self.logger.info("Relatório embedded gerado com sucesso")
@@ -1285,25 +1502,43 @@ class GeradorRelatorio:
                 nome = info['nome_campo']
                 diff_pct = info['diferenca_pct']
                 
-                # Define cor baseada no tipo de campo e direção da diferença
-                # Se diferença for menor que 1%, não aplica cor
-                aplicar_cor = abs(diff_pct) >= 1.0
-                
-                if campo in DEA_INPUT_COLS:
-                    # Para inputs: negativo é bom (redução), positivo é ruim (aumento necessário)
-                    cor = "success" if (diff_pct < 0 and aplicar_cor) else ("warning" if aplicar_cor else "")
-                    texto = f"Redução {abs(diff_pct):.1f}%" if diff_pct < 0 else f"Aumento {diff_pct:.1f}%"
+                # Se diferença é muito pequena (< 1%), considerar eficiente
+                if abs(diff_pct) < 1.0:
+                    alvos_items.append(f'<li><strong>{nome}:</strong> <span class="badge bg-success">✅ ≈ Meta atingida</span></li>')
                 else:
-                    # Para output: positivo é necessário (aumento), negativo é bom (meta atingida)
-                    cor = "warning" if (diff_pct > 0 and aplicar_cor) else ("success" if aplicar_cor else "")
-                    texto = f"Aumento {diff_pct:.1f}%" if diff_pct > 0 else f"Meta atingida (↗{abs(diff_pct):.1f}%)"
-                
-                if cor:
-                    alvos_items.append(f'<li><strong>{nome}:</strong> <span class="text-{cor}">{texto}</span></li>')
-                else:
-                    alvos_items.append(f'<li><strong>{nome}:</strong> {texto}</li>')
+                    # Lógica de cores CORRIGIDA (igual à tabela de benchmarks):
+                    if campo in DEA_INPUT_COLS:
+                        # Para INPUTS: redução = PROBLEMA (vermelho), aumento = neutro (laranja)
+                        if diff_pct < 0:
+                            # Meta menor que atual = PROBLEMA (recursos em excesso)
+                            cor = "danger"
+                            seta = "↘"
+                            texto = f"{seta} Reduzir {abs(diff_pct):.1f}%"
+                            tooltip = "Recursos em excesso - requer atenção"
+                        else:
+                            # Meta maior que atual = NEUTRO (mais recursos necessários)
+                            cor = "warning"
+                            seta = "↗"
+                            texto = f"{seta} Aumentar {diff_pct:.1f}%"
+                            tooltip = "Mais recursos necessários"
+                    else:
+                        # Para OUTPUT: aumento = PROBLEMA (vermelho), redução = bom (verde)
+                        if diff_pct > 0:
+                            # Meta maior que atual = PROBLEMA (produção insuficiente)
+                            cor = "danger"
+                            seta = "↗"
+                            texto = f"{seta} Aumentar {diff_pct:.1f}%"
+                            tooltip = "Produção insuficiente - requer atenção"
+                        else:
+                            # Meta menor que atual = BOM (produção adequada)
+                            cor = "success"
+                            seta = "↘"
+                            texto = f"{seta} Produção adequada"
+                            tooltip = "Produzindo acima da meta"
+                    
+                    alvos_items.append(f'<li><strong>{nome}:</strong> <span class="badge bg-{cor}" title="{tooltip}">{texto}</span></li>')
             
-            alvos_html = f"<ul>{''.join(alvos_items)}</ul>"
+            alvos_html = f"<ul class='alvos-list'>{''.join(alvos_items)}</ul>"
         else:
             alvos_html = "<p>Dados de alvos não disponíveis.</p>"
         
@@ -1323,6 +1558,8 @@ class GeradorRelatorio:
         .alert-section {{ background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; }}
         .alert ul {{ margin-bottom: 0; }}
         .alert li {{ margin-bottom: 0.5rem; }}
+        .alvos-list li {{ margin-bottom: 0.8rem; }}
+        .alvos-list .badge {{ font-size: 0.85em; padding: 0.4em 0.6em; cursor: help; }}
     </style>
 </head>
 <body>
@@ -1332,7 +1569,7 @@ class GeradorRelatorio:
             <h3 class="text-center">{info_hospital.get('DESCESTAB', 'Nome não disponível')}</h3>
             <p class="text-center lead">CNES: {cnes} | Competência: {competencia}</p>
             <p class="text-center">{info_hospital.get('MUNICIPIO', 'Município não informado')} - {info_hospital.get('UF', 'UF não informada')} | {info_hospital.get('REGIAO', 'Região não informada')}</p>
-            <p class="text-center">Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+            <p class="text-center">Relatório de Eficiência Hospitalar</p>
         </div>
     </div>
     
@@ -1426,12 +1663,7 @@ class GeradorRelatorio:
                 <h2>🏥 Análise dos Principais Procedimentos</h2>
             </div>
             <div class="card-body">
-                <p><strong>Gráfico 1:</strong> Formato do relatório oficial com top 10 procedimentos mais relevantes:</p>
-                <img src="procedimentos.png" alt="Gráfico de Procedimentos Oficial" style="max-width: 100%; height: auto; margin-bottom: 2rem;" />
-                
-                <hr style="margin: 2rem 0;">
-                
-                <p><strong>Gráfico 2:</strong> Visualização interativa dos mesmos dados com códigos dos procedimentos (barras horizontais):</p>
+                <p>Visualização interativa dos principais procedimentos com códigos detalhados:</p>
                 <iframe src="procedimentos_interativo.html" width="100%" height="850" frameborder="0"></iframe>
             </div>
         </div>
@@ -1441,6 +1673,7 @@ class GeradorRelatorio:
             <div class="card-body text-center text-muted">
                 <p>Relatório gerado pelo Sistema de Análise de Eficiência Hospitalar</p>
                 <p>Arquivos de visualização salvos em: {output_dir}</p>
+                <p><small>Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</small></p>
             </div>
         </div>
     </div>
@@ -1455,8 +1688,7 @@ class GeradorRelatorio:
                                       tabela_benchmarks: str, df_alertas: pd.DataFrame, 
                                       num_benchmarks: int, info_hospital: Dict[str, str], 
                                       info_eficiencia: Dict[str, Any], info_alvos: Dict[str, Dict[str, float]],
-                                      html_evolucao: str, html_spider: str, html_procedimentos_plotly: str,
-                                      img_procedimentos_base64: str) -> str:
+                                      html_evolucao: str, html_spider: str, html_procedimentos_plotly: str) -> str:
         """Gera o HTML do relatório com todas as visualizações incorporadas."""
         
         # Processa alertas (igual ao método original)
@@ -1512,7 +1744,7 @@ class GeradorRelatorio:
         else:
             eficiencia_html = "<strong>Eficiência:</strong> Não disponível<br>"
         
-        # Prepara informações de alvos (igual ao método original)
+        # Prepara informações de alvos
         alvos_html = ""
         if info_alvos:
             alvos_items = []
@@ -1520,21 +1752,43 @@ class GeradorRelatorio:
                 nome = info['nome_campo']
                 diff_pct = info['diferenca_pct']
                 
-                aplicar_cor = abs(diff_pct) >= 1.0
-                
-                if campo in DEA_INPUT_COLS:
-                    cor = "success" if (diff_pct < 0 and aplicar_cor) else ("warning" if aplicar_cor else "")
-                    texto = f"Redução {abs(diff_pct):.1f}%" if diff_pct < 0 else f"Aumento {diff_pct:.1f}%"
+                # Se diferença é muito pequena (< 1%), considerar eficiente
+                if abs(diff_pct) < 1.0:
+                    alvos_items.append(f'<li><strong>{nome}:</strong> <span class="badge bg-success">✅ ≈ Meta atingida</span></li>')
                 else:
-                    cor = "warning" if (diff_pct > 0 and aplicar_cor) else ("success" if aplicar_cor else "")
-                    texto = f"Aumento {diff_pct:.1f}%" if diff_pct > 0 else f"Meta atingida (↗{abs(diff_pct):.1f}%)"
-                
-                if cor:
-                    alvos_items.append(f'<li><strong>{nome}:</strong> <span class="text-{cor}">{texto}</span></li>')
-                else:
-                    alvos_items.append(f'<li><strong>{nome}:</strong> {texto}</li>')
+                    # Lógica de cores CORRIGIDA (igual à tabela de benchmarks):
+                    if campo in DEA_INPUT_COLS:
+                        # Para INPUTS: redução = PROBLEMA (vermelho), aumento = neutro (laranja)
+                        if diff_pct < 0:
+                            # Meta menor que atual = PROBLEMA (recursos em excesso)
+                            cor = "danger"
+                            seta = "↘"
+                            texto = f"{seta} Reduzir {abs(diff_pct):.1f}%"
+                            tooltip = "Recursos em excesso - requer atenção"
+                        else:
+                            # Meta maior que atual = NEUTRO (mais recursos necessários)
+                            cor = "warning"
+                            seta = "↗"
+                            texto = f"{seta} Aumentar {diff_pct:.1f}%"
+                            tooltip = "Mais recursos necessários"
+                    else:
+                        # Para OUTPUT: aumento = PROBLEMA (vermelho), redução = bom (verde)
+                        if diff_pct > 0:
+                            # Meta maior que atual = PROBLEMA (produção insuficiente)
+                            cor = "danger"
+                            seta = "↗"
+                            texto = f"{seta} Aumentar {diff_pct:.1f}%"
+                            tooltip = "Produção insuficiente - requer atenção"
+                        else:
+                            # Meta menor que atual = BOM (produção adequada)
+                            cor = "success"
+                            seta = "↘"
+                            texto = f"{seta} Produção adequada"
+                            tooltip = "Produzindo acima da meta"
+                    
+                    alvos_items.append(f'<li><strong>{nome}:</strong> <span class="badge bg-{cor}" title="{tooltip}">{texto}</span></li>')
             
-            alvos_html = f"<ul>{''.join(alvos_items)}</ul>"
+            alvos_html = f"<ul class='alvos-list'>{''.join(alvos_items)}</ul>"
         else:
             alvos_html = "<p>Dados de alvos não disponíveis.</p>"
 
@@ -1567,13 +1821,6 @@ class GeradorRelatorio:
         corpo_evolucao = extrair_corpo_plotly(html_evolucao)
         corpo_spider = extrair_corpo_plotly(html_spider)
         corpo_procedimentos_plotly = extrair_corpo_plotly(html_procedimentos_plotly)
-        
-        # Imagem dos procedimentos
-        img_procedimentos_html = ""
-        if img_procedimentos_base64:
-            img_procedimentos_html = f'<img src="{img_procedimentos_base64}" alt="Gráfico de Procedimentos Oficial" style="max-width: 100%; height: auto; margin-bottom: 2rem;" />'
-        else:
-            img_procedimentos_html = "<p>Gráfico de procedimentos não disponível.</p>"
 
         html_template_embedded = f"""
 <!DOCTYPE html>
@@ -1592,6 +1839,8 @@ class GeradorRelatorio:
         .alert-section {{ background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; }}
         .alert ul {{ margin-bottom: 0; }}
         .alert li {{ margin-bottom: 0.5rem; }}
+        .alvos-list li {{ margin-bottom: 0.8rem; }}
+        .alvos-list .badge {{ font-size: 0.85em; padding: 0.4em 0.6em; cursor: help; }}
         .plotly-container {{ min-height: 400px; }}
     </style>
 </head>
@@ -1602,8 +1851,7 @@ class GeradorRelatorio:
             <h3 class="text-center">{info_hospital.get('DESCESTAB', 'Nome não disponível')}</h3>
             <p class="text-center lead">CNES: {cnes} | Competência: {competencia}</p>
             <p class="text-center">{info_hospital.get('MUNICIPIO', 'Município não informado')} - {info_hospital.get('UF', 'UF não informada')} | {info_hospital.get('REGIAO', 'Região não informada')}</p>
-            <p class="text-center">Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
-            <p class="text-center"><small><i class="fas fa-download"></i> Versão Incorporada (Todas as visualizações incluídas)</small></p>
+            <p class="text-center">Relatório de Eficiência Hospitalar</p>
         </div>
     </div>
     
@@ -1701,12 +1949,7 @@ class GeradorRelatorio:
                 <h2>🏥 Análise dos Principais Procedimentos</h2>
             </div>
             <div class="card-body">
-                <p><strong>Gráfico 1:</strong> Formato do relatório oficial com top 10 procedimentos mais relevantes:</p>
-                {img_procedimentos_html}
-                
-                <hr style="margin: 2rem 0;">
-                
-                <p><strong>Gráfico 2:</strong> Visualização interativa dos mesmos dados com códigos dos procedimentos (barras horizontais):</p>
+                <p>Visualização interativa dos principais procedimentos com códigos detalhados:</p>
                 <div class="plotly-container">
                     {corpo_procedimentos_plotly}
                 </div>
@@ -1718,6 +1961,7 @@ class GeradorRelatorio:
             <div class="card-body text-center text-muted">
                 <p>Relatório gerado pelo Sistema de Análise de Eficiência Hospitalar</p>
                 <p><i class="fas fa-check-circle text-success"></i> Relatório autossuficiente - todas as visualizações incorporadas</p>
+                <p><small>Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</small></p>
             </div>
         </div>
     </div>
