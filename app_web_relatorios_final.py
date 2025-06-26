@@ -5,6 +5,7 @@ Versão simplificada que foca no download e preview básico funcionando.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import pathlib
 import sys
@@ -206,8 +207,8 @@ def extrair_preview_do_relatorio(html_path):
         st.error(f"Erro ao extrair preview: {e}")
         return None
 
-def gerar_relatorio_web(cnes, competencia, tipo='padrao'):
-    """Gera relatório e retorna informações do arquivo."""
+def gerar_relatorio_web(cnes, competencia):
+    """Gera relatório incorporado para visualização na página."""
     try:
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -229,57 +230,31 @@ def gerar_relatorio_web(cnes, competencia, tipo='padrao'):
         status_text.text('📈 Processando dados e gerando visualizações...')
         progress_bar.progress(50)
         
-        if tipo == 'embedded':
-            # Gera relatório embedded (tudo incorporado)
-            status_text.text('📦 Gerando relatório incorporado...')
-            html_content = gerador.gerar_relatorio_embedded(cnes, competencia)
-            
-            status_text.text('✅ Relatório incorporado gerado com sucesso!')
-            progress_bar.progress(100)
-            
-            # Informações do relatório embedded
-            tamanho_kb = len(html_content.encode('utf-8')) / 1024
-            
-            return {
-                'html_content': html_content,
-                'tipo': 'embedded',
-                'tamanho_kb': tamanho_kb,
-                'preview_info': {
-                    'tamanho_arquivo': len(html_content),
-                    'num_graficos': html_content.count('plotly-container'),
-                    'num_imagens': html_content.count('data:image'),
-                    'tem_tabelas': 'table' in html_content,
-                    'tem_spider': 'spider' in html_content.lower(),
-                    'tem_evolucao': 'temporal' in html_content.lower() or 'evolucao' in html_content.lower(),
-                    'tem_benchmarks': 'benchmarks' in html_content.lower() or 'benchmark' in html_content.lower(),
-                }
+        # Sempre gera relatório embedded para visualização
+        status_text.text('📦 Gerando relatório incorporado...')
+        progress_bar.progress(70)
+        
+        html_content = gerador.gerar_relatorio_embedded(cnes, competencia)
+        
+        status_text.text('✅ Relatório gerado com sucesso!')
+        progress_bar.progress(100)
+        
+        # Informações do relatório
+        tamanho_kb = len(html_content.encode('utf-8')) / 1024
+        
+        return {
+            'html_content': html_content,
+            'tamanho_kb': tamanho_kb,
+            'preview_info': {
+                'tamanho_arquivo': len(html_content),
+                'num_graficos': html_content.count('plotly-container'),
+                'num_imagens': html_content.count('data:image'),
+                'tem_tabelas': 'table' in html_content,
+                'tem_spider': 'spider' in html_content.lower(),
+                'tem_evolucao': 'temporal' in html_content.lower() or 'evolucao' in html_content.lower(),
+                'tem_benchmarks': 'benchmarks' in html_content.lower() or 'benchmark' in html_content.lower(),
             }
-        else:
-            # Gera relatório padrão (com arquivos externos)
-            arquivo_relatorio = gerador.gerar_relatorio_completo(cnes, competencia)
-            
-            status_text.text('📦 Preparando arquivos para download...')
-            progress_bar.progress(80)
-            
-            if arquivo_relatorio and os.path.exists(arquivo_relatorio):
-                # Criar pacote ZIP
-                zip_path = criar_pacote_download(arquivo_relatorio)
-                
-                # Extrair informações para preview
-                preview_info = extrair_preview_do_relatorio(arquivo_relatorio)
-                
-                status_text.text('✅ Relatório padrão gerado com sucesso!')
-                progress_bar.progress(100)
-                
-                return {
-                    'html_path': arquivo_relatorio,
-                    'zip_path': zip_path,
-                    'tipo': 'padrao',
-                    'preview_info': preview_info
-                }
-            else:
-                status_text.text('❌ Erro: arquivo não foi criado')
-                return None
+        }
             
     except Exception as e:
         st.error(f"Erro ao gerar relatório: {e}")
@@ -400,9 +375,10 @@ def main():
         - ✅ Spider chart de alvos
         - ✅ Sistema de alertas
         
-        **🎯 Tipos Disponíveis:**
-        - 📄 **Padrão**: HTML + arquivos externos
-        - 📦 **Incorporado**: Tudo em um arquivo
+        **🎯 Funcionalidades:**
+        - 🖥️ **Visualização na página**: Veja o relatório diretamente aqui
+        - 📥 **Download**: Baixe o arquivo HTML completo
+        - 📤 **Compartilhamento**: Arquivo autossuficiente
         """)
     
     # Informações do hospital selecionado
@@ -426,31 +402,18 @@ def main():
             """, unsafe_allow_html=True)
         
         with col2:
-            # Botões de geração
-            st.markdown("**📊 Tipo de Relatório:**")
+            # Botão de geração
+            st.markdown("**📊 Gerar Relatório:**")
             
-            col_btn1, col_btn2 = st.columns(2)
-            
-            with col_btn1:
-                if st.button("📄 Padrão", type="secondary", use_container_width=True, help="Relatório com arquivos externos"):
-                    st.session_state.gerar_relatorio = True
-                    st.session_state.tipo_relatorio = 'padrao'
-                    st.session_state.relatorio_gerado = False
-            
-            with col_btn2:
-                if st.button("📦 Incorporado", type="primary", use_container_width=True, help="Tudo em um arquivo"):
-                    st.session_state.gerar_relatorio = True
-                    st.session_state.tipo_relatorio = 'embedded'
-                    st.session_state.relatorio_gerado = False
+            if st.button("🚀 Gerar Relatório Completo", type="primary", use_container_width=True, help="Gera relatório para visualização na página"):
+                st.session_state.gerar_relatorio = True
+                st.session_state.relatorio_gerado = False
         
         # Geração do relatório
         if st.session_state.get('gerar_relatorio', False) and not st.session_state.get('relatorio_gerado', False):
-            tipo_relatorio = st.session_state.get('tipo_relatorio', 'padrao')
-            tipo_nome = "Incorporado" if tipo_relatorio == 'embedded' else "Padrão"
+            st.markdown("### 🔄 Gerando Relatório...")
             
-            st.markdown(f"### 🔄 Gerando Relatório {tipo_nome}...")
-            
-            resultados = gerar_relatorio_web(cnes_selecionado, competencia_selecionada, tipo_relatorio)
+            resultados = gerar_relatorio_web(cnes_selecionado, competencia_selecionada)
             
             if resultados:
                 st.session_state.resultados_relatorio = resultados
@@ -464,12 +427,10 @@ def main():
         # Mostrar resultados se relatório foi gerado
         if st.session_state.get('relatorio_gerado', False) and 'resultados_relatorio' in st.session_state:
             resultados = st.session_state.resultados_relatorio
-            tipo_relatorio = resultados.get('tipo', 'padrao')
-            tipo_nome = "Incorporado" if tipo_relatorio == 'embedded' else "Padrão"
             
-            st.markdown(f"""
+            st.markdown("""
             <div class="success-box">
-                <h3>✅ Relatório {tipo_nome} Gerado com Sucesso!</h3>
+                <h3>✅ Relatório Gerado com Sucesso!</h3>
                 <p>Relatório completo gerado com todas as funcionalidades do modo local.</p>
             </div>
             """, unsafe_allow_html=True)
@@ -477,137 +438,106 @@ def main():
             # Preview das informações
             if resultados['preview_info']:
                 info_preview = resultados['preview_info']
+                tamanho_info = f"📁 Tamanho: {resultados['tamanho_kb']:.1f} KB"
                 
-                if tipo_relatorio == 'embedded':
-                    tamanho_info = f"📁 Tamanho: {resultados['tamanho_kb']:.1f} KB (arquivo único)"
-                else:
-                    tamanho_info = f"📁 Tamanho: {info_preview['tamanho_arquivo']:,} caracteres"
+                col_info, col_download = st.columns([2, 1])
                 
-                st.markdown(f"""
-                <div class="report-preview">
-                    <h4>📄 Informações do Relatório {tipo_nome}</h4>
-                    <div style="display: flex; justify-content: space-around; margin: 1rem 0;">
-                        <div><strong>📊 Gráficos Interativos:</strong> {info_preview['num_graficos']}</div>
-                        <div><strong>🖼️ Imagens:</strong> {info_preview['num_imagens']}</div>
-                        <div><strong>📋 Tabelas:</strong> {'✅' if info_preview['tem_tabelas'] else '❌'}</div>
+                with col_info:
+                    st.markdown(f"""
+                    <div class="report-preview">
+                        <h4>📄 Informações do Relatório</h4>
+                        <div style="display: flex; justify-content: space-around; margin: 1rem 0;">
+                            <div><strong>📊 Gráficos:</strong> {info_preview['num_graficos']}</div>
+                            <div><strong>🖼️ Imagens:</strong> {info_preview['num_imagens']}</div>
+                            <div><strong>📋 Tabelas:</strong> {'✅' if info_preview['tem_tabelas'] else '❌'}</div>
+                        </div>
+                        <div style="display: flex; justify-content: space-around;">
+                            <div><strong>🕷️ Spider Chart:</strong> {'✅' if info_preview['tem_spider'] else '❌'}</div>
+                            <div><strong>📈 Evolução:</strong> {'✅' if info_preview['tem_evolucao'] else '❌'}</div>
+                            <div><strong>🎯 Benchmarks:</strong> {'✅' if info_preview['tem_benchmarks'] else '❌'}</div>
+                        </div>
+                        <p style="margin-top: 1rem;"><strong>{tamanho_info}</strong></p>
                     </div>
-                    <div style="display: flex; justify-content: space-around;">
-                        <div><strong>🕷️ Spider Chart:</strong> {'✅' if info_preview['tem_spider'] else '❌'}</div>
-                        <div><strong>📈 Evolução:</strong> {'✅' if info_preview['tem_evolucao'] else '❌'}</div>
-                        <div><strong>🎯 Benchmarks:</strong> {'✅' if info_preview['tem_benchmarks'] else '❌'}</div>
-                    </div>
-                    <p style="margin-top: 1rem;"><strong>{tamanho_info}</strong></p>
-                    <p><strong>🔄 Tipo:</strong> {'📦 Autossuficiente (sem dependências)' if tipo_relatorio == 'embedded' else '📄 Padrão (com arquivos externos)'}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Botões de download
-            if tipo_relatorio == 'embedded':
-                # Relatório incorporado - apenas um download
-                col_down1, col_down2 = st.columns([2, 1])
+                    """, unsafe_allow_html=True)
                 
-                with col_down1:
-                    # Download HTML incorporado
-                    nome_html = f"relatorio_incorporado_{cnes_selecionado}_{competencia_selecionada}.html"
+                with col_download:
+                    # Botão de download
+                    nome_html = f"relatorio_{cnes_selecionado}_{competencia_selecionada}.html"
                     st.download_button(
-                        label="📦 Baixar Relatório Incorporado",
+                        label="📥 Baixar Relatório",
                         data=resultados['html_content'].encode('utf-8'),
                         file_name=nome_html,
                         mime="text/html",
                         use_container_width=True,
-                        help="Arquivo HTML único com todas as visualizações incorporadas"
+                        help="Download do arquivo HTML completo"
                     )
-                
-                with col_down2:
-                    # Botão para novo relatório
-                    if st.button("🔄 Gerar Novo Relatório", use_container_width=True):
-                        # Limpar estado
-                        for key in ['gerar_relatorio', 'relatorio_gerado', 'resultados_relatorio', 'tipo_relatorio']:
-                            if key in st.session_state:
-                                del st.session_state[key]
-                        st.rerun()
-                
-                st.markdown("""
-                <div style="background-color: #e8f5e8; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0;">
-                    <h5>📦 Vantagens do Relatório Incorporado:</h5>
-                    <ul>
-                        <li>✅ <strong>Arquivo único</strong> - sem dependências externas</li>
-                        <li>✅ <strong>Autossuficiente</strong> - todas as imagens e gráficos incluídos</li>
-                        <li>✅ <strong>Ideal para compartilhamento</strong> - envie por email facilmente</li>
-                        <li>✅ <strong>Arquivamento permanente</strong> - não perde componentes</li>
-                        <li>✅ <strong>Menor tamanho total</strong> - compactado e otimizado</li>
-                    </ul>
-                </div>
-                """, unsafe_allow_html=True)
-                
-            else:
-                # Relatório padrão - múltiplos downloads
-                col_down1, col_down2, col_down3 = st.columns(3)
-                
-                with col_down1:
-                    # Download HTML principal
-                    with open(resultados['html_path'], 'rb') as f:
-                        html_bytes = f.read()
                     
-                    nome_html = f"relatorio_{cnes_selecionado}_{competencia_selecionada}.html"
-                    st.download_button(
-                        label="📄 Baixar HTML Principal",
-                        data=html_bytes,
-                        file_name=nome_html,
-                        mime="text/html",
-                        use_container_width=True,
-                        help="Arquivo HTML principal do relatório"
-                    )
-                
-                with col_down2:
-                    # Download ZIP completo
-                    if resultados['zip_path'] and os.path.exists(resultados['zip_path']):
-                        with open(resultados['zip_path'], 'rb') as f:
-                            zip_bytes = f.read()
-                        
-                        nome_zip = f"relatorio_completo_{cnes_selecionado}_{competencia_selecionada}.zip"
-                        st.download_button(
-                            label="📦 Baixar Pacote ZIP",
-                            data=zip_bytes,
-                            file_name=nome_zip,
-                            mime="application/zip",
-                            use_container_width=True,
-                            help="Pacote completo com todos os arquivos"
-                        )
-                
-                with col_down3:
                     # Botão para novo relatório
-                    if st.button("🔄 Gerar Novo Relatório", use_container_width=True):
+                    if st.button("🔄 Novo Relatório", use_container_width=True):
                         # Limpar estado
-                        for key in ['gerar_relatorio', 'relatorio_gerado', 'resultados_relatorio', 'tipo_relatorio']:
+                        for key in ['gerar_relatorio', 'relatorio_gerado', 'resultados_relatorio']:
                             if key in st.session_state:
                                 del st.session_state[key]
                         st.rerun()
             
-            # Instruções baseadas no tipo
-            if tipo_relatorio == 'embedded':
+            # Divisor
+            st.markdown("---")
+            
+            # Visualização do relatório na página
+            st.markdown("### 📊 Visualização do Relatório")
+            
+            # Opções de visualização
+            col_view_options, col_view_action = st.columns([3, 1])
+            
+            with col_view_options:
+                view_mode = st.radio(
+                    "Modo de visualização:",
+                    ["🖥️ Visualizar na página", "📱 Visualização compacta"],
+                    horizontal=True,
+                    help="Escolha como visualizar o relatório"
+                )
+            
+            with col_view_action:
+                if st.button("🔄 Atualizar Visualização", use_container_width=True):
+                    st.rerun()
+            
+            # Exibir o relatório
+            if view_mode == "🖥️ Visualizar na página":
+                # Visualização completa
                 st.markdown("""
-                ---
-                ### 📝 Instruções de Uso - Relatório Incorporado:
+                <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0;">
+                    <h5>📋 Relatório Completo</h5>
+                    <p>Visualização completa do relatório com todos os gráficos e tabelas interativas.</p>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                1. **📦 Baixar arquivo único**: Clique no botão acima para baixar
-                2. **🌐 Abrir no navegador**: Clique duas vezes no arquivo baixado
-                3. **📤 Compartilhar facilmente**: Envie o arquivo por email ou mensagem
-                4. **📁 Arquivar permanentemente**: Não depende de outros arquivos
+                # Exibir o HTML do relatório
+                components.html(resultados['html_content'], height=800, scrolling=True)
                 
-                > **✅ Garantia**: Relatório **completo e autossuficiente** - idêntico ao modo local!
-                """)
             else:
+                # Visualização compacta
                 st.markdown("""
-                ---
-                ### 📝 Instruções de Uso - Relatório Padrão:
+                <div style="background-color: #e7f3ff; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0;">
+                    <h5>📱 Visualização Compacta</h5>
+                    <p>Visualização otimizada para dispositivos menores ou navegação rápida.</p>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                1. **📄 HTML Principal**: Baixe e abra no navegador para visualização completa
-                2. **📦 Pacote ZIP**: Contém todos os arquivos (ideal para arquivamento)
-                3. **🌐 Melhor experiência**: Abra o arquivo HTML baixado no seu navegador preferido
-                
-                > **✅ Garantia**: Os relatórios gerados são **idênticos** aos criados pelo modo local!
-                """)
+                # Exibir o HTML do relatório em tamanho menor
+                components.html(resultados['html_content'], height=600, scrolling=True)
+            
+            # Informações de uso
+            st.markdown("""
+            ---
+            ### 📝 Como usar:
+            
+            - **🖥️ Visualização na página**: Veja o relatório completo diretamente aqui
+            - **📥 Download**: Use o botão "Baixar Relatório" para salvar o arquivo
+            - **📤 Compartilhamento**: O arquivo baixado é autossuficiente e pode ser enviado por email
+            - **🔄 Novo relatório**: Use o botão "Novo Relatório" para gerar outro
+            
+            > **✅ Garantia**: Relatório **completo e idêntico** ao modo local!
+            """)
     
     else:
         # Mensagens de orientação
