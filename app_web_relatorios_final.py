@@ -71,7 +71,7 @@ except ImportError as e:
     st.error(f"Erro ao importar módulos: {e}")
     st.stop()
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache por 1 hora
 def carregar_dados_disponiveis():
     """Carrega dados disponíveis para seleção."""
     try:
@@ -117,6 +117,35 @@ def carregar_dados_disponiveis():
     except Exception as e:
         st.error(f"Erro ao carregar dados: {e}")
         return [], [], {}, pd.DataFrame()
+
+@st.cache_data(ttl=1800)  # Cache por 30 minutos
+def carregar_configuracao():
+    """Carrega configuração com cache."""
+    try:
+        return CarregadorConfiguracao('config.yaml')
+    except Exception as e:
+        st.error(f"Erro ao carregar configuração: {e}")
+        return None
+
+@st.cache_data(ttl=3600)  # Cache por 1 hora
+def carregar_dados_base():
+    """Carrega dados base com cache otimizado."""
+    try:
+        config = carregar_configuracao()
+        if not config:
+            return None, None, None
+            
+        carregador = CarregadorDados(config)
+        
+        # Carrega todos os dados base uma vez
+        df_mm = carregador.carregar_media_movel()
+        df_dea = carregador.carregar_dea()
+        df_alertas = carregador.carregar_alertas()
+        
+        return df_mm, df_dea, df_alertas
+    except Exception as e:
+        st.error(f"Erro ao carregar dados base: {e}")
+        return None, None, None
 
 def formatar_competencia(competencia):
     """Formata competência para exibição."""
@@ -186,7 +215,12 @@ def gerar_relatorio_web(cnes, competencia, tipo='padrao'):
         status_text.text('🔄 Inicializando geração do relatório...')
         progress_bar.progress(10)
         
-        config = CarregadorConfiguracao('config.yaml')
+        # Usa configuração cached
+        config = carregar_configuracao()
+        if not config:
+            st.error("Erro ao carregar configuração")
+            return None
+            
         gerador = GeradorRelatorio(config)
         
         status_text.text('📊 Carregando dados...')
@@ -263,9 +297,22 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Carrega dados disponíveis
+    # Carrega dados disponíveis com cache otimizado
     with st.spinner('🔄 Carregando dados disponíveis...'):
-        cnes_disponiveis, competencias_disponiveis, hospitais_info, df_mm = carregar_dados_disponiveis()
+        # Usa cache otimizado - dados ficam em memória
+        if 'dados_iniciais_carregados' not in st.session_state:
+            cnes_disponiveis, competencias_disponiveis, hospitais_info, df_mm = carregar_dados_disponiveis()
+            st.session_state.cnes_disponiveis = cnes_disponiveis
+            st.session_state.competencias_disponiveis = competencias_disponiveis  
+            st.session_state.hospitais_info = hospitais_info
+            st.session_state.df_mm = df_mm
+            st.session_state.dados_iniciais_carregados = True
+        else:
+            # Usa dados do session_state (mais rápido)
+            cnes_disponiveis = st.session_state.cnes_disponiveis
+            competencias_disponiveis = st.session_state.competencias_disponiveis
+            hospitais_info = st.session_state.hospitais_info
+            df_mm = st.session_state.df_mm
     
     if not cnes_disponiveis:
         st.error("❌ Não foi possível carregar os dados. Verifique se os arquivos estão disponíveis.")
