@@ -1,0 +1,24 @@
+log_dir: logs
+raw_data_dir: resultados/dados_raw
+moving_average_dir: resultados/media_movel
+clusters_dir: resultados/clusters # Added for identificar_proximos output
+dea_dir: resultados/dea # Adicionado para resultados do DEA
+alertas_dir: resultados/alertas # Adicionado para resultados de alertas
+sql_connection_name: conn_sql_server
+supabase_target_table: "media_movel_consolidada" # Nome da tabela única no Supabase DB
+supabase_clusters_table: "clusters_proximos_consolidada" # Tabela para dados de clusters 
+
+# Parâmetros para datasus_mes_v2.py
+num_top_subgrupos: 5
+critical_filter_cols:
+  - CNES_SALAS
+  - CNES_LEITOS_SUS
+  - HORAS_MEDICOS
+  - HORAS_ENFERMAGEM
+  - SIA_SIH_VALOR
+
+# Parâmetros para alertas.py
+alertas_config:
+  limiar_alto_risco: 5  # Número mínimo de alertas para considerar hospital de alto risco
+  gerar_relatorio_automatico: true
+  salvar_historico: true 

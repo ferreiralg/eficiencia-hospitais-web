@@ -1,0 +1,11 @@
+# Requirements para aplicação web de relatórios
+streamlit>=1.28.0
+flask>=2.3.0
+pandas>=1.5.0
+numpy>=1.24.0
+matplotlib>=3.6.0
+seaborn>=0.12.0
+plotly>=5.15.0
+pyyaml>=6.0
+gunicorn>=21.0.0  # Para deploy em produção
+python-dotenv>=1.0.0  # Para variáveis de ambiente 
